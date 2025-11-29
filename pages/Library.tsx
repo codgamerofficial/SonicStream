@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { usePlayer } from '../context/PlayerContext';
-import { Heart, Music, Play, Trash2, Plus, ListPlus, X, UploadCloud, Globe } from 'lucide-react';
+import { Heart, Music, Play, Trash2, Plus, ListPlus, X, UploadCloud, Globe, FileAudio, Link } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Song, Playlist } from '../types';
-import { addSongToPublicDb } from '../services/dbService';
+import { addSongToPublicDb, uploadFileToStorage } from '../services/dbService';
 
 const SongRow: React.FC<{ song: Song, playlistId?: string }> = ({ song, playlistId }) => {
     const { playSong, addToQueue, removeFromPlaylist, toggleFavorite } = usePlayer();
@@ -11,8 +11,10 @@ const SongRow: React.FC<{ song: Song, playlistId?: string }> = ({ song, playlist
     return (
       <div className="group flex items-center justify-between p-3 rounded-xl hover:bg-white/5 border border-transparent hover:border-white/5 transition">
           <div className="flex items-center gap-4 flex-1 overflow-hidden" onClick={() => playSong(song)}>
-              <div className="relative w-12 h-12 rounded-lg overflow-hidden shrink-0 cursor-pointer">
-                  <img src={song.thumbnail} alt={song.title} className="w-full h-full object-cover" />
+              <div className="relative w-12 h-12 rounded-lg overflow-hidden shrink-0 cursor-pointer bg-zinc-800 flex items-center justify-center">
+                  <img src={song.thumbnail} alt={song.title} className="w-full h-full object-cover" onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?q=80&w=100&auto=format&fit=crop';
+                  }} />
                   <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
                       <Play size={16} fill="white" className="text-white" />
                   </div>
@@ -67,7 +69,11 @@ const Library: React.FC = () => {
   
   // Public Upload State
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadType, setUploadType] = useState<'youtube' | 'file'>('youtube');
+  
   const [uploadUrl, setUploadUrl] = useState('');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadArtist, setUploadArtist] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -87,30 +93,45 @@ const Library: React.FC = () => {
       e.preventDefault();
       setIsUploading(true);
       try {
-          // Extract Video ID
-          let videoId = '';
-          try {
-             const urlObj = new URL(uploadUrl);
-             if (urlObj.hostname.includes('youtube.com')) {
-                 videoId = urlObj.searchParams.get('v') || '';
-             } else if (urlObj.hostname.includes('youtu.be')) {
-                 videoId = urlObj.pathname.slice(1);
-             }
-          } catch(e) {
-              // fallback if invalid URL string
-          }
+          let songId = '';
+          let thumbnail = '';
 
-          if (!videoId) {
-              alert("Invalid YouTube URL. Please use a full link (e.g., https://youtube.com/watch?v=...)");
-              setIsUploading(false);
-              return;
+          if (uploadType === 'youtube') {
+              // Extract Video ID
+              try {
+                const urlObj = new URL(uploadUrl);
+                if (urlObj.hostname.includes('youtube.com')) {
+                    songId = urlObj.searchParams.get('v') || '';
+                } else if (urlObj.hostname.includes('youtu.be')) {
+                    songId = urlObj.pathname.slice(1);
+                }
+              } catch(e) {
+                  // fallback if invalid URL string
+              }
+
+              if (!songId) {
+                  alert("Invalid YouTube URL. Please use a full link (e.g., https://youtube.com/watch?v=...)");
+                  setIsUploading(false);
+                  return;
+              }
+              thumbnail = `https://img.youtube.com/vi/${songId}/maxresdefault.jpg`;
+          } else {
+              // Handle File Upload
+              if (!uploadFile) {
+                  alert("Please select a file.");
+                  setIsUploading(false);
+                  return;
+              }
+              const publicUrl = await uploadFileToStorage(uploadFile);
+              songId = publicUrl; // The ID is the full URL for files
+              thumbnail = 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?q=80&w=600&auto=format&fit=crop';
           }
 
           const newSong: Song = {
-              id: videoId,
+              id: songId,
               title: uploadTitle,
               artist: uploadArtist,
-              thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+              thumbnail: thumbnail,
               channelTitle: uploadArtist
           };
 
@@ -118,6 +139,7 @@ const Library: React.FC = () => {
           alert("Song added successfully! (It may appear in 'Community Uploads' on Home)");
           setShowUploadModal(false);
           setUploadUrl('');
+          setUploadFile(null);
           setUploadTitle('');
           setUploadArtist('');
       } catch (err: any) {
@@ -139,7 +161,7 @@ const Library: React.FC = () => {
                     onClick={() => setShowUploadModal(true)}
                     className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-xl text-sm font-bold transition border border-white/5"
                 >
-                    <UploadCloud size={16} /> Public Upload
+                    <UploadCloud size={16} /> Upload Music
                 </button>
                 {activeTab === 'playlists' && !selectedPlaylist && (
                     <button 
@@ -308,9 +330,23 @@ const Library: React.FC = () => {
                            </div>
                            <button onClick={() => setShowUploadModal(false)}><X size={20} className="text-zinc-500 hover:text-white" /></button>
                        </div>
-                       <p className="text-xs text-zinc-500 mb-6">
-                           Add a YouTube song to the global database. Everyone will be able to search and play this.
-                       </p>
+                       
+                       {/* Upload Type Tabs */}
+                       <div className="flex gap-2 p-1 bg-zinc-950 rounded-lg mb-6 border border-zinc-800">
+                           <button 
+                            onClick={() => setUploadType('youtube')}
+                            className={`flex-1 py-2 text-xs font-bold rounded-md flex items-center justify-center gap-2 transition ${uploadType === 'youtube' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                           >
+                               <Link size={14} /> YouTube Link
+                           </button>
+                           <button 
+                            onClick={() => setUploadType('file')}
+                            className={`flex-1 py-2 text-xs font-bold rounded-md flex items-center justify-center gap-2 transition ${uploadType === 'file' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                           >
+                               <FileAudio size={14} /> Upload File
+                           </button>
+                       </div>
+
                        <form onSubmit={handlePublicUpload} className="space-y-4">
                            <div>
                                <label className="text-xs text-zinc-400 font-bold ml-1">Title</label>
@@ -334,17 +370,32 @@ const Library: React.FC = () => {
                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-violet-500"
                                />
                            </div>
-                           <div>
-                               <label className="text-xs text-zinc-400 font-bold ml-1">YouTube Link</label>
-                               <input 
-                                   type="url"
-                                   required
-                                   value={uploadUrl}
-                                   onChange={(e) => setUploadUrl(e.target.value)}
-                                   placeholder="https://youtube.com/watch?v=..."
-                                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-violet-500"
-                               />
-                           </div>
+
+                           {uploadType === 'youtube' ? (
+                               <div>
+                                    <label className="text-xs text-zinc-400 font-bold ml-1">YouTube Link</label>
+                                    <input 
+                                        type="url"
+                                        required
+                                        value={uploadUrl}
+                                        onChange={(e) => setUploadUrl(e.target.value)}
+                                        placeholder="https://youtube.com/watch?v=..."
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-violet-500"
+                                    />
+                               </div>
+                           ) : (
+                               <div>
+                                    <label className="text-xs text-zinc-400 font-bold ml-1">Audio File (MP3, WAV)</label>
+                                    <input 
+                                        type="file"
+                                        accept="audio/*"
+                                        required
+                                        onChange={(e) => setUploadFile(e.target.files ? e.target.files[0] : null)}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-violet-500 text-sm file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-violet-600 file:text-white hover:file:bg-violet-500"
+                                    />
+                               </div>
+                           )}
+
                            <button 
                                type="submit"
                                disabled={isUploading}

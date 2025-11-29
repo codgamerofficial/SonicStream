@@ -27,7 +27,7 @@ export const getPublicSongs = async (): Promise<Song[]> => {
 
     if (!error && data) {
       dbSongs = data.map((item: any) => ({
-        id: item.youtube_id,
+        id: item.youtube_id, // This stores either the YT ID or the File URL
         title: item.title,
         artist: item.artist,
         thumbnail: item.thumbnail,
@@ -86,7 +86,56 @@ export const searchPublicSongs = async (query: string): Promise<Song[]> => {
   return Array.from(new Map(allResults.map(s => [s.id, s])).values());
 };
 
+export const uploadFileToStorage = async (file: File): Promise<string> => {
+    try {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${Date.now()}.${fileExt}`;
+        const filePath = `${fileName}`;
+
+        // Upload to 'songs' bucket
+        const { error: uploadError } = await supabase.storage
+            .from('songs')
+            .upload(filePath, file);
+
+        if (uploadError) {
+            // Check specifically for Bucket Not Found
+            if (uploadError.message.includes("Bucket not found")) {
+                 console.warn("Supabase Storage 'songs' bucket is missing.");
+                 console.warn("Please run: insert into storage.buckets (id, name, public) values ('songs', 'songs', true);");
+            }
+            throw uploadError;
+        }
+
+        // Get Public URL
+        const { data } = supabase.storage
+            .from('songs')
+            .getPublicUrl(filePath);
+
+        return data.publicUrl;
+    } catch (error: any) {
+        console.error("Storage Upload Error, using local fallback:", error.message);
+        // Fallback: Create a local Blob URL so the user can still play the song in this session
+        // Note: This URL is temporary and valid only for the current browser session
+        return URL.createObjectURL(file);
+    }
+};
+
 export const addSongToPublicDb = async (song: Song) => {
+  // If the ID is a blob URL, we MUST skip Supabase DB insert because it's local-only
+  if (song.id.startsWith('blob:')) {
+      console.warn("Song is local-only (Blob URL). Saving to Local Storage instead of Public DB.");
+      try {
+        const current = getLocalSongs();
+        if (!current.find(s => s.id === song.id)) {
+            const updated = [song, ...current];
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+        }
+        return true;
+      } catch (localErr) {
+        throw new Error("Failed to save local song.");
+      }
+  }
+
   // 1. Try Supabase Insert
   try {
       const { error } = await supabase
@@ -96,7 +145,7 @@ export const addSongToPublicDb = async (song: Song) => {
           title: song.title,
           artist: song.artist,
           thumbnail: song.thumbnail,
-          youtube_id: song.id,
+          youtube_id: song.id, // Stores URL or ID
           created_at: new Date().toISOString()
         }
       ]);

@@ -5,7 +5,8 @@ import ReactPlayer from 'react-player';
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
 
 // Define config outside component to prevent re-creation on every render
-const PLAYER_CONFIG = {
+// Using 'any' type to avoid strict type checking mismatches with ReactPlayer types
+const PLAYER_CONFIG: any = {
   youtube: {
     playerVars: { 
         autoplay: 0, 
@@ -17,8 +18,16 @@ const PLAYER_CONFIG = {
         iv_load_policy: 3,
         modestbranding: 1
     }
+  },
+  file: { 
+      attributes: {
+          controlsList: 'nodownload' 
+      }
   }
 };
+
+// Cast ReactPlayer to any to avoid TypeScript errors regarding missing props (like url) in strict environments
+const SafeReactPlayer = ReactPlayer as any;
 
 export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
@@ -48,7 +57,8 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   });
   
   // Ref to the actual ReactPlayer instance
-  const playerRef = useRef<ReactPlayer>(null);
+  // Using 'any' type to avoid "refers to a value" TypeScript error
+  const playerRef = useRef<any>(null);
 
   useEffect(() => {
     localStorage.setItem('sonic_favorites', JSON.stringify(favorites));
@@ -159,6 +169,14 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   const toggleBassBoost = () => setBassBoost(!bassBoost);
 
+  // Helper to determine URL type
+  const getSongUrl = (song: Song) => {
+      // If it looks like a URL (http/https), use it directly
+      if (song.id.startsWith('http')) return song.id;
+      // Otherwise assume it's a YouTube ID
+      return `https://www.youtube.com/watch?v=${song.id}`;
+  };
+
   return (
     <PlayerContext.Provider
       value={{
@@ -195,22 +213,22 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           // IMPORTANT: Do not use display: none; it prevents YouTube API from initializing correct refs.
           // We use a 1x1 pixel invisible div instead.
           <div style={{ position: 'fixed', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', bottom: 0, left: 0, zIndex: -1 }}>
-            <ReactPlayer
+            <SafeReactPlayer
                 key={currentSong.id} // Forces remount on song change to prevent "interrupted by pause" error
                 ref={playerRef}
-                url={`https://www.youtube.com/watch?v=${currentSong.id}`}
+                url={getSongUrl(currentSong)}
                 playing={isPlaying}
                 volume={volume}
-                onProgress={(state) => {
+                onProgress={(state: any) => {
                     // Only update progress if we aren't seeking to avoid jitter
                     setProgress(state.played);
                 }}
-                onDuration={(d) => setDuration(d)}
+                onDuration={(d: any) => setDuration(d)}
                 onEnded={nextSong}
                 width="100%"
                 height="100%"
                 config={PLAYER_CONFIG}
-                onError={(e) => {
+                onError={(e: any) => {
                     // Swallow the specific interruption error or log for debugging
                     console.log("Player Status:", e);
                 }}

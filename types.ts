@@ -1,5 +1,5 @@
 export interface Song {
-  id: string;
+  id: string; // Can be a YouTube Video ID OR a direct URL to an audio file
   title: string;
   artist: string;
   thumbnail: string;
